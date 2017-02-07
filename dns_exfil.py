@@ -3,6 +3,7 @@ import re, os.path
 import sys
 import time
 import zmq
+import threading
 
 # edit device interface names at the end of this file
 # sudo python dns_inline.py
@@ -229,6 +230,18 @@ def is_good_dns(name, log, likelihoods, bigrams_float):
 
 
 
+def worker_routine(worker_url,log, likelihoods,bigrams_float,context=None):
+    context = context or zmq.Context.instance()
+    socket = context.socket(zmq.REP)
+    socket.connect(worker_url)
+    while True:
+        query= socket.recv()
+        answer=is_good_dns(query,log, likelihoods, bigrams_float)
+        if answer:
+            socket.send(b"true")
+        else:
+            socket.send(b"false")
+
 #### MAIN ####
 
 likelihoods = []
@@ -281,6 +294,7 @@ else:
 
 # print("likelihoods: " + str(likelihoods))
 
+
 # Finally, evaluate some DNS queries
 print("Evaluating DNS query strings...")
 #for now lets just run from argv
@@ -288,15 +302,23 @@ print("Evaluating DNS query strings...")
 #    sys.exit
 #query=sys.argv[1]
 log = open(log_filename, "a")
-context=zmq.Context()
-socket=context.socket(zmq.REP)
-socket.bind("tcp://*:5555")
-while(True):
-    query=socket.recv()
-    answer=is_good_dns(query,log, likelihoods, bigrams_float)
-    if answer:
-        socket.send(b"true")
-    else:
-        socket.send(b"false")
+url_worker="inproc://workers"
+url_client = "tcp://*:5555"
+
+context = zmq.Context.instance()
+
+clients =context.socket(zmq.ROUTER)
+clients.bind(url_client)
+workers = context.socket(zmq.DEALER)
+workers.bind(url_worker)
+for i in range(5):
+    thread = threading.Thread(target=worker_routine, args=(url_worker,log, likelihoods, bigrams_float,))
+    thread.start()
+
+zmq.proxy(clients,workers)
+
+clients.close()
+workers.close()
+context.term()
 
 log.close()
