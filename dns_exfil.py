@@ -1,0 +1,290 @@
+#!/usr/bin/python
+import re, os.path
+import sys
+
+# edit device interface names at the end of this file
+# sudo python dns_inline.py
+
+whitelist_text = ["in-addr.arpa","courier-sandbox-push-apple.com","_ldap._tcp","ip6.arpa","edge-chat.facebook.com"]
+whitelist_likelihood_field = ["www","ftp","sftp","smtp","imap"]
+NUM_LETTERS = 26
+MIN_LIKELY_WORD = 5
+MAX_LIKELY_WORD = 25
+LIKELIHOOD_RATIO = 100.0  # Reduces false positives
+LIKELIHOOD_POWERBASE = 7  # Reduces false positives
+word_file = "words.txt"
+log_filename = "filterlog.txt"
+likelihood_file = "likelihoods.txt"
+bigram_file = "bigrams.txt"
+
+def all_letters(word):
+	word = word.lower()			# convert to lowercase
+	for i in range(len(word)):
+		if ord(word[i]) < ord('a') or ord(word[i]) > ord('z'):
+			return False
+	return True
+
+def all_digits(word):
+	for i in range(len(word)):
+		if ord(word[i]) < ord('0') or ord(word[i]) > ord('9'):
+			return False
+	return True
+
+def all_hex(word):
+	for i in range(len(word)):
+		if not ( ( (ord(word[i]) >= ord('0') and (ord(word[i]) <= ord('9')) ) ) or \
+				 ( (ord(word[i]) >= ord('A') and (ord(word[i]) <= ord('F')) ) ) or \
+				 ( (ord(word[i]) >= ord('a') and (ord(word[i]) <= ord('f')) ) ) ):
+			return False
+	return True
+
+def compute_bigrams(words_filename, bigram_file):
+
+	wordlist = []
+	f = open(words_filename,"r")
+	for word in f:
+		wordlist.append(word)
+
+	bigrams = []
+	bigrams_float = []
+	for i in range(NUM_LETTERS):
+		thisrow = []
+		thisrow_float = []
+		for j in range(NUM_LETTERS):
+			thisrow.append(0)
+			thisrow_float.append(0.0)
+		bigrams.append(thisrow)
+		bigrams_float.append(thisrow_float)
+
+	for word in wordlist:
+		word = word.rstrip()
+		if all_letters(word):
+			if len(word) > 1:
+				# print("word: " + word + " " + str(len(word)))
+				for i in range(0, len(word)-2):
+					letter = word[i]
+					#print("letter: " + letter)
+					next_letter = word[i+1]
+					#print("next_letter: " + next_letter)
+					bigrams[ord(letter)-ord('a')][ord(next_letter)-ord('a')] += 1
+
+	for i in range(NUM_LETTERS):
+		row_sum = 0
+		for j in range(NUM_LETTERS):
+			row_sum += bigrams[i][j]
+		for j in range(NUM_LETTERS):
+			bigrams_float[i][j] = float(bigrams[i][j]) / float(row_sum)
+
+	# print("Bigrams:\n")
+	# print(str(bigrams_float))
+
+	# write to file
+	b = open(bigram_file, "w")
+	for i in range(NUM_LETTERS):
+		for j in range(NUM_LETTERS):
+			b.write(str(bigrams_float[i][j]) + " " )
+		b.write("\n")
+	b.close()
+
+	return bigrams_float
+
+def compute_likelihoods(wordfile, bigrams_float):
+
+	likelihoods = []
+	likelihood_tuples = []
+	for i in range(MAX_LIKELY_WORD):
+		likelihood_tuples.append([0.0,0])
+
+	words = open(wordfile,"r")
+	wordlist = []
+	for word in words:
+		wordlist.append(word.rstrip())
+	words.close()
+
+	for w in wordlist:
+		# print("w: " + w)
+		if all_letters(w):
+			# print("w: " + w)
+			if len(w) <= MAX_LIKELY_WORD:
+				likelihood = 1.0
+				for i in range(0,len(w)-1):
+					letter = ord(w[i]) - ord('a')
+					next_letter = ord(w[i+1]) - ord('a')
+					likelihood = likelihood * bigrams_float[letter][next_letter]
+				likelihood_tuples[len(w)-1][0] += likelihood
+				likelihood_tuples[len(w)-1][1] += 1
+				# print("tuple: " + str(likelihood_tuples[len(w)-1]))
+
+	for i in range(MAX_LIKELY_WORD):
+		if likelihood_tuples[i][1] == 0.0:
+			likelihoods.append(0.0)
+		else:
+			likelihoods.append(likelihood_tuples[i][0] / float(likelihood_tuples[i][1]))
+
+	like = open(likelihood_file,"w")
+	for i in range(MAX_LIKELY_WORD):
+		like.write(str(likelihoods[i]) + "\n")
+	like.close()
+
+	return likelihoods
+
+def is_good_dns(name, log, likelihoods, bigrams_float):
+
+	# Get DNS Query or Response from Scapy packet
+	whitelisted = False
+	no_tld = False
+	all_hex_fields = False
+	hex_string = False
+	long_fields = False
+	too_many_fields = False
+	hex_string = False
+	unlikely_string = False
+	LONG_FIELD = 25
+	MAX_FIELDS = 5
+	MIN_HEX_LENGTH = 6
+
+	badstring = ""	# Reasons a query is tagged bad
+
+	fields = name.split(".")
+	field_count = len(fields)
+	# print(str(fields))		# List version
+
+	for white in whitelist_text:
+		if (white in name):
+			whitelisted = True
+
+	for field in fields:				# Find a field that's all hex
+		field_length = len(field)
+		if field_length >= MIN_HEX_LENGTH:
+			if (all_hex(field) and (not all_digits(field))):
+				all_hex_fields = True
+				badstring += "has_all_hex_string "
+				# break
+
+	for field in fields:				# Find a hex string over a min length
+		m = re.search(r'[0-9A-Fa-f]*', field)
+		if m:
+			if (len(m.group(0)) >= MIN_HEX_LENGTH):
+				hex_string = True
+				badstring += "has_long_hex_string "
+				# break
+
+	for field in fields:
+		if len(field) >= LONG_FIELD:
+			badstring += "has_long_field "
+			long_fields = True
+			# break
+
+	if field_count < 2:
+		badstring += "no_tld "
+		no_tld = True
+
+	if field_count > MAX_FIELDS:
+		badstring += "too_many_fields "
+		too_many_fields = True
+
+	# Find "unlikely" strings in fields using bigram probability model
+	for field in fields:
+		field = field.lower()	# Use lowercase only, for text evaluation
+		if not (field in whitelist_likelihood_field):
+			if len(field) >= MIN_LIKELY_WORD:
+				if all_letters(field):
+					if len(field) < MAX_LIKELY_WORD:
+						reference_likelihood = likelihoods[len(field)]
+					else:
+						reference_likelihood = 1.0
+						unlikely_string = True	# All letters, but too long as a real DNS field
+					field_likelihood = 1.0
+					adjusted_likelihood = 0.0
+					for i in range(len(field)-1):
+						this_ltr = field[i]
+						next_ltr = field[i+1]
+						this_idx = ord(this_ltr) - ord('a')
+						next_idx = ord(next_ltr) - ord('a')
+						field_likelihood = field_likelihood * bigrams_float[this_idx][next_idx]
+					# Artificially 'boost' field likelihood to reduce false positives
+					# Boost more for longer strings.
+					adjusted_likelihood = field_likelihood * float((LIKELIHOOD_POWERBASE ** len(field)))
+					if (adjusted_likelihood < reference_likelihood):
+						unlikely_string = True
+						badstring += "unlikely "
+						#  print("Unlikely: " + field + " " + str(field_likelihood) + " " + str(adjusted_likelihood) + " " + str(reference_likelihood))
+
+	# Good or bad?
+	if ((no_tld or all_hex_fields or long_fields or too_many_fields or hex_string or unlikely_string) and not whitelisted):
+		log.write("\nBad dns: " + name + " " + badstring + "\n")
+		log.flush()
+		print("\nBad dns: " + name + " " + badstring)
+		sys.stdout.flush()
+                return False
+	else:
+		log.write("\nGood dns: " + name + "\n")
+		log.flush()
+		print("\nGood dns: " + name)
+		sys.stdout.flush()
+                return True
+
+
+
+
+#### MAIN ####
+
+likelihoods = []
+bigrams_float = []
+# See if likelihood data exists. If not, generate
+if not os.path.isfile(likelihood_file):
+
+	print("No likelihood file...")
+
+	# See if bigram data exists.
+	if not os.path.isfile(bigram_file):		# If not, generate
+
+		print("No bigram file, generating...")
+		if not os.path.isfile(word_file):
+			print("Need wordfile for bigrams, but not found")
+		else:
+			bigrams_float = compute_bigrams(word_file, bigram_file)
+	else:									# If yes, import from file
+		print("Reading bigram file...")
+		bigrams = open(bigram_file,"r")
+		for line in bigrams:
+			bigram_row = []
+			line_list = line.split()
+			# print("line_list: " + str(line_list))
+			for entry in line_list:
+				bigram_row.append(float(entry))
+			bigrams_float.append(bigram_row)
+		bigrams.close()
+
+	print("Computing likelihoods...")
+	likelihoods = compute_likelihoods(word_file, bigrams_float)
+
+else:
+	if bigrams_float == []:
+		bigrams = open(bigram_file,"r")
+		for line in bigrams:
+			bigram_row = []
+			line_list = line.split()
+			# print("line_list: " + str(line_list))
+			for entry in line_list:
+				bigram_row.append(float(entry))
+			bigrams_float.append(bigram_row)
+		bigrams.close()
+
+	print("Reading likelihood file...")
+	like = open(likelihood_file, "r")
+	for line in like:
+		likelihoods.append(float(line))
+	like.close()
+
+# print("likelihoods: " + str(likelihoods))
+
+# Finally, evaluate some DNS queries
+print("Evaluating DNS query strings...")
+#for now lets just run from argv
+if len(sys.argv) < 2:
+    sys.exit
+query=sys.argv[1]
+log = open(log_filename, "a")
+is_good_dns(query,log, likelihoods, bigrams_float)
+log.close()

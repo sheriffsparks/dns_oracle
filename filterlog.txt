@@ -1,0 +1,16 @@
+
+Bad dns: a no_tld 
+
+Good dns: a.com
+
+Good dns: cnn.com
+
+Bad dns: foooooodoadsklfhjeklqcnlkencalkndciewjciohuiahcdjk.com has_long_field unlikely 
+
+Bad dns: lq.nlkenc.lkndc.ewjcih.iahcdjk.com too_many_fields unlikely unlikely 
+
+Bad dns: lq.nlkenc.lkndc.ewh.iahcdjk.com too_many_fields unlikely 
+
+Good dns: baldacsd.com
+
+Good dns: baldacsd.com
