@@ -294,11 +294,9 @@ socket.bind("tcp://*:5555")
 while(True):
     query=socket.recv()
     answer=is_good_dns(query,log, likelihoods, bigrams_float)
-    time.sleep(5)
     if answer:
         socket.send(b"true")
     else:
         socket.send(b"false")
-
 
 log.close()
