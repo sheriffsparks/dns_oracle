@@ -1,6 +1,8 @@
 #!/usr/bin/python
 import re, os.path
 import sys
+import time
+import zmq
 
 # edit device interface names at the end of this file
 # sudo python dns_inline.py
@@ -282,9 +284,21 @@ else:
 # Finally, evaluate some DNS queries
 print("Evaluating DNS query strings...")
 #for now lets just run from argv
-if len(sys.argv) < 2:
-    sys.exit
-query=sys.argv[1]
+#if len(sys.argv) < 2:
+#    sys.exit
+#query=sys.argv[1]
 log = open(log_filename, "a")
-is_good_dns(query,log, likelihoods, bigrams_float)
+context=zmq.Context()
+socket=context.socket(zmq.REP)
+socket.bind("tcp://*:5555")
+while(True):
+    query=socket.recv()
+    answer=is_good_dns(query,log, likelihoods, bigrams_float)
+    time.sleep(5)
+    if answer:
+        socket.send(b"true")
+    else:
+        socket.send(b"false")
+
+
 log.close()
