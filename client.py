@@ -13,6 +13,6 @@ query=sys.argv[1]
 socket.send(query)
 answer=socket.recv()
 
-print answer
+print "{} {}".format(answer, query)
 
 

@@ -311,7 +311,7 @@ clients =context.socket(zmq.ROUTER)
 clients.bind(url_client)
 workers = context.socket(zmq.DEALER)
 workers.bind(url_worker)
-for i in range(5):
+for i in range(50):
     thread = threading.Thread(target=worker_routine, args=(url_worker,log, likelihoods, bigrams_float,))
     thread.start()
 
