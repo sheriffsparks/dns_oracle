@@ -6,6 +6,8 @@ import zmq
 import threading
 import logging
 from systemd.journal import JournalHandler
+import math
+from collections import Counter
 
 # edit device interface names at the end of this file
 # sudo python dns_inline.py
@@ -48,6 +50,9 @@ def all_hex(word):
 			return False
 	return True
 
+def entropy(s):
+    p, lns =Counter(s), float(len(s))
+    return (-sum(count/lns * math.log(count/lns,2) for count in p.values()))
 def compute_bigrams(words_filename, bigram_file):
 
 	wordlist = []
@@ -140,7 +145,6 @@ def compute_likelihoods(wordfile, bigrams_float):
 
 def is_good_dns(name,log, likelihoods, bigrams_float):
 
-	# Get DNS Query or Response from Scapy packet
 	whitelisted = False
 	no_tld = False
 	all_hex_fields = False
@@ -149,6 +153,7 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
 	too_many_fields = False
 	hex_string = False
 	unlikely_string = False
+        high_ent = False
 	LONG_FIELD = 25
 	MAX_FIELDS = 5
 	MIN_HEX_LENGTH = 6
@@ -219,16 +224,21 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
 						unlikely_string = True
 						badstring += "unlikely "
 						#  print("Unlikely: " + field + " " + str(field_likelihood) + " " + str(adjusted_likelihood) + " " + str(reference_likelihood))
+        ent=entropy(name)
+        log.warning("{}'s entropy is {}".format(name,ent))
+        if ent > 4.0:
+            high_ent=1;
+            badstring += " high entropy {}".format(ent)
 
 	# Good or bad?
-	if ((no_tld or all_hex_fields or long_fields or too_many_fields or hex_string or unlikely_string) and not whitelisted):
-		log.warning("\nBad dns: " + name + " " + badstring + "\n")
+	if ((no_tld or all_hex_fields or long_fields or too_many_fields or hex_string or unlikely_string or high_ent) and not whitelisted):
+		log.warning("Bad dns: " + name + " " + badstring + "\n")
 		#log.flush()
 		#print("\nBad dns: " + name + " " + badstring)
 		sys.stdout.flush()
                 return False
 	else:
-		log.info("\nGood dns: " + name + "\n")
+		log.info("Good dns: " + name + "\n")
 		#log.flush()
 		#print("\nGood dns: " + name)
 		sys.stdout.flush()
