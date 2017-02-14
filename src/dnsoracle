@@ -4,6 +4,8 @@ import sys
 import time
 import zmq
 import threading
+import logging
+from systemd.journal import JournalHandler
 
 # edit device interface names at the end of this file
 # sudo python dns_inline.py
@@ -15,10 +17,15 @@ MIN_LIKELY_WORD = 5
 MAX_LIKELY_WORD = 25
 LIKELIHOOD_RATIO = 100.0  # Reduces false positives
 LIKELIHOOD_POWERBASE = 7  # Reduces false positives
-word_file = "words.txt"
-log_filename = "filterlog.txt"
-likelihood_file = "likelihoods.txt"
-bigram_file = "bigrams.txt"
+wd='/usr/local/etc/dnsoracle/'
+word_file =wd+"words.txt"
+#log_filename = "filterlog.txt"
+likelihood_file = wd+"likelihoods.txt"
+bigram_file =wd+"bigrams.txt"
+pid=os.getpid()
+with open('/var/run/dnsoracle.pid','w') as f:
+    f.write(str(pid))
+    f.flush()
 
 def all_letters(word):
 	word = word.lower()			# convert to lowercase
@@ -131,7 +138,7 @@ def compute_likelihoods(wordfile, bigrams_float):
 
 	return likelihoods
 
-def is_good_dns(name, log, likelihoods, bigrams_float):
+def is_good_dns(name,log, likelihoods, bigrams_float):
 
 	# Get DNS Query or Response from Scapy packet
 	whitelisted = False
@@ -215,15 +222,15 @@ def is_good_dns(name, log, likelihoods, bigrams_float):
 
 	# Good or bad?
 	if ((no_tld or all_hex_fields or long_fields or too_many_fields or hex_string or unlikely_string) and not whitelisted):
-		log.write("\nBad dns: " + name + " " + badstring + "\n")
-		log.flush()
-		print("\nBad dns: " + name + " " + badstring)
+		log.warning("\nBad dns: " + name + " " + badstring + "\n")
+		#log.flush()
+		#print("\nBad dns: " + name + " " + badstring)
 		sys.stdout.flush()
                 return False
 	else:
-		log.write("\nGood dns: " + name + "\n")
-		log.flush()
-		print("\nGood dns: " + name)
+		log.info("\nGood dns: " + name + "\n")
+		#log.flush()
+		#print("\nGood dns: " + name)
 		sys.stdout.flush()
                 return True
 
@@ -244,81 +251,91 @@ def worker_routine(worker_url,log, likelihoods,bigrams_float,context=None):
 
 #### MAIN ####
 
-likelihoods = []
-bigrams_float = []
-# See if likelihood data exists. If not, generate
-if not os.path.isfile(likelihood_file):
+def main():
+    log = logging.getLogger('dnsoracle')
+    log.addHandler(JournalHandler())
+    log.setLevel(logging.INFO)
+    log.info("started dnsoracle logging")
+    likelihoods = []
+    bigrams_float = []
+    # See if likelihood data exists. If not, generate
+    if not os.path.isfile(likelihood_file):
 
-	print("No likelihood file...")
-
-	# See if bigram data exists.
-	if not os.path.isfile(bigram_file):		# If not, generate
-
-		print("No bigram file, generating...")
-		if not os.path.isfile(word_file):
-			print("Need wordfile for bigrams, but not found")
-		else:
-			bigrams_float = compute_bigrams(word_file, bigram_file)
-	else:									# If yes, import from file
-		print("Reading bigram file...")
-		bigrams = open(bigram_file,"r")
-		for line in bigrams:
-			bigram_row = []
-			line_list = line.split()
-			# print("line_list: " + str(line_list))
-			for entry in line_list:
-				bigram_row.append(float(entry))
-			bigrams_float.append(bigram_row)
-		bigrams.close()
-
-	print("Computing likelihoods...")
-	likelihoods = compute_likelihoods(word_file, bigrams_float)
-
-else:
-	if bigrams_float == []:
-		bigrams = open(bigram_file,"r")
-		for line in bigrams:
-			bigram_row = []
-			line_list = line.split()
-			# print("line_list: " + str(line_list))
-			for entry in line_list:
-				bigram_row.append(float(entry))
-			bigrams_float.append(bigram_row)
-		bigrams.close()
-
-	print("Reading likelihood file...")
-	like = open(likelihood_file, "r")
-	for line in like:
-		likelihoods.append(float(line))
-	like.close()
-
-# print("likelihoods: " + str(likelihoods))
+    	#print("No likelihood file...")
+        log.info("No likelihood file...")
 
 
-# Finally, evaluate some DNS queries
-print("Evaluating DNS query strings...")
-#for now lets just run from argv
-#if len(sys.argv) < 2:
-#    sys.exit
-#query=sys.argv[1]
-log = open(log_filename, "a")
-url_worker="inproc://workers"
-url_client = "tcp://*:5555"
+    	# See if bigram data exists.
+    	if not os.path.isfile(bigram_file):		# If not, generate
 
-context = zmq.Context.instance()
+    		log.info("No bigram file, generating...")
+    		if not os.path.isfile(word_file):
+    			log.info("Need wordfile for bigrams, but not found")
+    		else:
+    			bigrams_float = compute_bigrams(word_file, bigram_file)
+    	else:									# If yes, import from file
+    		log.info("Reading bigram file...")
+    		bigrams = open(bigram_file,"r")
+    		for line in bigrams:
+    			bigram_row = []
+    			line_list = line.split()
+    			# print("line_list: " + str(line_list))
+    			for entry in line_list:
+    				bigram_row.append(float(entry))
+    			bigrams_float.append(bigram_row)
+    		bigrams.close()
 
-clients =context.socket(zmq.ROUTER)
-clients.bind(url_client)
-workers = context.socket(zmq.DEALER)
-workers.bind(url_worker)
-for i in range(50):
-    thread = threading.Thread(target=worker_routine, args=(url_worker,log, likelihoods, bigrams_float,))
-    thread.start()
+    	log.info("Computing likelihoods...")
+    	likelihoods = compute_likelihoods(word_file, bigrams_float)
 
-zmq.proxy(clients,workers)
+    else:
+    	if bigrams_float == []:
+    		bigrams = open(bigram_file,"r")
+    		for line in bigrams:
+    			bigram_row = []
+    			line_list = line.split()
+    			# print("line_list: " + str(line_list))
+    			for entry in line_list:
+    				bigram_row.append(float(entry))
+    			bigrams_float.append(bigram_row)
+    		bigrams.close()
 
-clients.close()
-workers.close()
-context.term()
+    	log.info("Reading likelihood file...")
+    	like = open(likelihood_file, "r")
+    	for line in like:
+    		likelihoods.append(float(line))
+    	like.close()
 
-log.close()
+    # print("likelihoods: " + str(likelihoods))
+
+
+    # Finally, evaluate some DNS queries
+    log.info("Evaluating DNS query strings...")
+    #for now lets just run from argv
+    #if len(sys.argv) < 2:
+    #    sys.exit
+    #query=sys.argv[1]
+    #log = open(log_filename, "a")
+    url_worker="inproc://workers"
+    url_client = "tcp://*:5555"
+
+    context = zmq.Context.instance()
+
+    clients =context.socket(zmq.ROUTER)
+    clients.bind(url_client)
+    workers = context.socket(zmq.DEALER)
+    workers.bind(url_worker)
+    for i in range(5):
+        thread = threading.Thread(target=worker_routine, args=(url_worker,log, likelihoods, bigrams_float,))
+        thread.start()
+
+    zmq.proxy(clients,workers)
+
+    clients.close()
+    workers.close()
+    context.term()
+
+    #log.close()
+
+if __name__=="__main__":
+    main()

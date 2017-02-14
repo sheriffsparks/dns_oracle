@@ -1,0 +1,15 @@
+[Unit]
+Description=DNS Oracle
+After=syslog.target network.target
+
+[Service]
+PIDFile=/var/run/dnsoracle.pid
+ExecStart=/usr/local/bin/dnsoracle
+Restart=always
+RestartSec=3
+
+
+
+
+[Install]
+WantedBy=multi-user.target
