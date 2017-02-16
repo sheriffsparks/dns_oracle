@@ -8,6 +8,7 @@ import logging
 from systemd.journal import JournalHandler
 import math
 from collections import Counter
+from sets import Set
 
 # edit device interface names at the end of this file
 # sudo python dns_inline.py
@@ -28,6 +29,7 @@ pid=os.getpid()
 with open('/var/run/dnsoracle.pid','w') as f:
     f.write(str(pid))
     f.flush()
+blacklist=Set([])
 
 def all_letters(word):
 	word = word.lower()			# convert to lowercase
@@ -146,6 +148,7 @@ def compute_likelihoods(wordfile, bigrams_float):
 def is_good_dns(name,log, likelihoods, bigrams_float):
 
 	whitelisted = False
+        blacklisted = False
 	no_tld = False
 	all_hex_fields = False
 	hex_string = False
@@ -158,15 +161,25 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
 	MAX_FIELDS = 5
 	MIN_HEX_LENGTH = 6
 
+        name=name.rstrip('.') # remove trailing dot
+
 	badstring = ""	# Reasons a query is tagged bad
 
 	fields = name.split(".")
 	field_count = len(fields)
 	# print(str(fields))		# List version
 
-	for white in whitelist_text:
+	for white in whitelist_text: ##COULD WE JUST RETURN HERE?
 		if (white in name):
 			whitelisted = True
+
+	if field_count < 2:
+		badstring += "no_tld "
+		no_tld = True
+        else:
+            tld=".".join(fields[-2:])
+            if tld in blacklist:
+                blacklisted=True
 
 	for field in fields:				# Find a field that's all hex
 		field_length = len(field)
@@ -190,9 +203,6 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
 			long_fields = True
 			# break
 
-	if field_count < 2:
-		badstring += "no_tld "
-		no_tld = True
 
 	if field_count > MAX_FIELDS:
 		badstring += "too_many_fields "
@@ -246,6 +256,12 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
 
 
 
+def blacklist_updater_thread(sleep_int):
+    while (True):
+       #update blacklist
+       time.sleep(sleep_int)
+        
+
 
 def worker_routine(worker_url,log, likelihoods,bigrams_float,context=None):
     context = context or zmq.Context.instance()
@@ -256,6 +272,7 @@ def worker_routine(worker_url,log, likelihoods,bigrams_float,context=None):
         answer=is_good_dns(query,log, likelihoods, bigrams_float)
         if answer:
             socket.send(b"true")
+            #update_db()
         else:
             socket.send(b"false")
 
@@ -321,11 +338,11 @@ def main():
 
     # Finally, evaluate some DNS queries
     log.info("Evaluating DNS query strings...")
-    #for now lets just run from argv
-    #if len(sys.argv) < 2:
-    #    sys.exit
-    #query=sys.argv[1]
-    #log = open(log_filename, "a")
+
+    #start blacklist updater
+    bthread=threading.Thread(target=blacklist_updater_thread,args=(500,))
+    bthread.start()
+
     url_worker="inproc://workers"
     url_client = "tcp://*:5555"
 
