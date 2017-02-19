@@ -9,6 +9,7 @@ from systemd.journal import JournalHandler
 import math
 from collections import Counter
 from sets import Set
+import MySQLdb as mdb
 
 # edit device interface names at the end of this file
 # sudo python dns_inline.py
@@ -25,11 +26,17 @@ word_file =wd+"words.txt"
 #log_filename = "filterlog.txt"
 likelihood_file = wd+"likelihoods.txt"
 bigram_file =wd+"bigrams.txt"
+
+#Database settings
+dburl="localhost"
+username="dnspy"
+password="dnstester"
+database="dns"
+
 pid=os.getpid()
 with open('/var/run/dnsoracle.pid','w') as f:
     f.write(str(pid))
     f.flush()
-blacklist=Set([])
 
 def all_letters(word):
 	word = word.lower()			# convert to lowercase
@@ -178,8 +185,12 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
 		no_tld = True
         else:
             tld=".".join(fields[-2:])
+            log.warn("checking tld: {} against blacklist {}".format(tld,blacklist))
             if tld in blacklist:
+                badstring += "black listed tld "
                 blacklisted=True
+            else:
+                log.warn("not in")
 
 	for field in fields:				# Find a field that's all hex
 		field_length = len(field)
@@ -202,7 +213,6 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
 			badstring += "has_long_field "
 			long_fields = True
 			# break
-
 
 	if field_count > MAX_FIELDS:
 		badstring += "too_many_fields "
@@ -241,7 +251,7 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
             badstring += " high entropy {}".format(ent)
 
 	# Good or bad?
-	if ((no_tld or all_hex_fields or long_fields or too_many_fields or hex_string or unlikely_string or high_ent) and not whitelisted):
+	if ((no_tld or all_hex_fields or long_fields or too_many_fields or hex_string or unlikely_string or high_ent or blacklisted) and not whitelisted):
 		log.warning("Bad dns: " + name + " " + badstring + "\n")
 		#log.flush()
 		#print("\nBad dns: " + name + " " + badstring)
@@ -255,13 +265,21 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
                 return True
 
 
-
-def blacklist_updater_thread(sleep_int):
+def blacklist_updater_thread(sleep_int,log):
+    log.info("starting blacklist updater thread")
+    con=create_db_connection()
+    cur=con.cursor()
+    global blacklist
     while (True):
-       #update blacklist
-       time.sleep(sleep_int)
-        
+        t1=time.time()
+        cur.execute("SELECT SUBSTRING_INDEX(QUERY, '.', -2) AS tld, COUNT(*) AS total FROM dns GROUP BY tld HAVING COUNT(*) > 10")
+        blacklist=Set([i[0] for i in cur.fetchall()])
+        log.warn("blacklist log contains {}".format(blacklist))
+        log.warn("DEBUG: it took {} seconds to compute this".format(time.time()-t1))
+        time.sleep(sleep_int)
 
+def create_db_connection():
+    return mdb.connect(dburl, username, password, database)
 
 def worker_routine(worker_url,log, likelihoods,bigrams_float,context=None):
     context = context or zmq.Context.instance()
@@ -273,6 +291,19 @@ def worker_routine(worker_url,log, likelihoods,bigrams_float,context=None):
         if answer:
             socket.send(b"true")
             #update_db()
+            try:
+                con=create_db_connection()
+                cur=con.cursor()
+                cur.execute("""INSERT INTO dns (query) VALUES (%s)""",(query.rstrip('.'),))
+                con.commit()
+            except mdb.Error, e:
+                if con:
+                    con.rollback()
+                log.critical("Error %d: %s" % (e.args[0],e.args[1]))
+
+            finally:
+                if con:
+                    con.close()
         else:
             socket.send(b"false")
 
@@ -340,7 +371,7 @@ def main():
     log.info("Evaluating DNS query strings...")
 
     #start blacklist updater
-    bthread=threading.Thread(target=blacklist_updater_thread,args=(500,))
+    bthread=threading.Thread(target=blacklist_updater_thread,args=(300,log,))
     bthread.start()
 
     url_worker="inproc://workers"

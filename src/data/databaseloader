@@ -1,0 +1,29 @@
+#!/usr/bin/python
+import zmq
+import sys
+import time
+import string
+import random
+
+context=zmq.Context()
+
+socket=context.socket(zmq.REQ)
+socket.connect("tcp://localhost:5555")
+
+if len(sys.argv) < 2:
+    sys.exit()
+
+with open('words.txt') as f:
+    l=f.readlines()
+query=sys.argv[1]
+for i in l:
+    foo=""
+    #for j in range(0,5):
+    #    foo=random.choice(string.letters+string.digits)+foo
+    #foo=foo+'.'
+    socket.send(foo+i)
+    answer=socket.recv()
+
+print "{} {}".format(answer, query)
+
+
