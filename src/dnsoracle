@@ -11,9 +11,6 @@ from collections import Counter
 from sets import Set
 import MySQLdb as mdb
 
-# edit device interface names at the end of this file
-# sudo python dns_inline.py
-
 whitelist_text = ["in-addr.arpa","courier-sandbox-push-apple.com","_ldap._tcp","ip6.arpa","edge-chat.facebook.com"]
 whitelist_likelihood_field = ["www","ftp","sftp","smtp","imap"]
 NUM_LETTERS = 26
@@ -21,6 +18,10 @@ MIN_LIKELY_WORD = 5
 MAX_LIKELY_WORD = 25
 LIKELIHOOD_RATIO = 100.0  # Reduces false positives
 LIKELIHOOD_POWERBASE = 7  # Reduces false positives
+MAX_SUB_DOMAINS = 10
+NUM_THREADS=3
+UPDATE_SECONDS=300
+
 wd='/usr/local/etc/dnsoracle/'
 word_file =wd+"words.txt"
 #log_filename = "filterlog.txt"
@@ -54,8 +55,8 @@ def all_digits(word):
 def all_hex(word):
 	for i in range(len(word)):
 		if not ( ( (ord(word[i]) >= ord('0') and (ord(word[i]) <= ord('9')) ) ) or \
-				 ( (ord(word[i]) >= ord('A') and (ord(word[i]) <= ord('F')) ) ) or \
-				 ( (ord(word[i]) >= ord('a') and (ord(word[i]) <= ord('f')) ) ) ):
+                        ( (ord(word[i]) >= ord('A') and (ord(word[i]) <= ord('F')) ) ) or \
+			( (ord(word[i]) >= ord('a') and (ord(word[i]) <= ord('f')) ) ) ):
 			return False
 	return True
 
@@ -176,7 +177,7 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
 	field_count = len(fields)
 	# print(str(fields))		# List version
 
-	for white in whitelist_text: ##COULD WE JUST RETURN HERE?
+	for white in whitelist_text:
 		if (white in name):
 			whitelisted = True
 
@@ -255,16 +256,17 @@ def is_good_dns(name,log, likelihoods, bigrams_float):
 		log.warning("Bad dns: " + name + " " + badstring + "\n")
 		#log.flush()
 		#print("\nBad dns: " + name + " " + badstring)
-		sys.stdout.flush()
+		#sys.stdout.flush()
                 return False
 	else:
 		log.info("Good dns: " + name + "\n")
 		#log.flush()
 		#print("\nGood dns: " + name)
-		sys.stdout.flush()
+		#sys.stdout.flush()
                 return True
 
 
+#every $sleep seconds this thread requeries the database for domains with a large number of subdomains
 def blacklist_updater_thread(sleep_int,log):
     log.info("starting blacklist updater thread")
     con=create_db_connection()
@@ -272,7 +274,7 @@ def blacklist_updater_thread(sleep_int,log):
     global blacklist
     while (True):
         t1=time.time()
-        cur.execute("SELECT SUBSTRING_INDEX(QUERY, '.', -2) AS tld, COUNT(*) AS total FROM dns GROUP BY tld HAVING COUNT(*) > 10")
+        cur.execute("SELECT SUBSTRING_INDEX(QUERY, '.', -2) AS tld, COUNT(*) AS total FROM dns GROUP BY tld HAVING COUNT(*) > {}".format(MAX_SUB_DOMAINS))
         blacklist=Set([i[0] for i in cur.fetchall()])
         log.warn("blacklist log contains {}".format(blacklist))
         log.warn("DEBUG: it took {} seconds to compute this".format(time.time()-t1))
@@ -310,59 +312,61 @@ def worker_routine(worker_url,log, likelihoods,bigrams_float,context=None):
 #### MAIN ####
 
 def main():
+    #set up logging
     log = logging.getLogger('dnsoracle')
     log.addHandler(JournalHandler())
     log.setLevel(logging.INFO)
     log.info("started dnsoracle logging")
+
     likelihoods = []
     bigrams_float = []
+
     # See if likelihood data exists. If not, generate
     if not os.path.isfile(likelihood_file):
-
-    	#print("No likelihood file...")
+        #print("No likelihood file...")
         log.info("No likelihood file...")
 
 
-    	# See if bigram data exists.
-    	if not os.path.isfile(bigram_file):		# If not, generate
+    # See if bigram data exists.
+    if not os.path.isfile(bigram_file):		# If not, generate
 
-    		log.info("No bigram file, generating...")
-    		if not os.path.isfile(word_file):
-    			log.info("Need wordfile for bigrams, but not found")
-    		else:
-    			bigrams_float = compute_bigrams(word_file, bigram_file)
-    	else:									# If yes, import from file
-    		log.info("Reading bigram file...")
-    		bigrams = open(bigram_file,"r")
-    		for line in bigrams:
-    			bigram_row = []
-    			line_list = line.split()
-    			# print("line_list: " + str(line_list))
-    			for entry in line_list:
-    				bigram_row.append(float(entry))
-    			bigrams_float.append(bigram_row)
-    		bigrams.close()
+        log.info("No bigram file, generating...")
+        if not os.path.isfile(word_file):
+            log.info("Need wordfile for bigrams, but not found")
+        else:
+            bigrams_float = compute_bigrams(word_file, bigram_file)
+    else:									# If yes, import from file
+        log.info("Reading bigram file...")
+        bigrams = open(bigram_file,"r")
+        for line in bigrams:
+            bigram_row = []
+            line_list = line.split()
+            # print("line_list: " + str(line_list))
+            for entry in line_list:
+                bigram_row.append(float(entry))
+            bigrams_float.append(bigram_row)
+            bigrams.close()
 
-    	log.info("Computing likelihoods...")
-    	likelihoods = compute_likelihoods(word_file, bigrams_float)
+    log.info("Computing likelihoods...")
+    likelihoods = compute_likelihoods(word_file, bigrams_float)
 
     else:
-    	if bigrams_float == []:
-    		bigrams = open(bigram_file,"r")
-    		for line in bigrams:
-    			bigram_row = []
-    			line_list = line.split()
-    			# print("line_list: " + str(line_list))
-    			for entry in line_list:
-    				bigram_row.append(float(entry))
-    			bigrams_float.append(bigram_row)
-    		bigrams.close()
+    if bigrams_float == []:
+        bigrams = open(bigram_file,"r")
+        for line in bigrams:
+            bigram_row = []
+            line_list = line.split()
+            # print("line_list: " + str(line_list))
+            for entry in line_list:
+                bigram_row.append(float(entry))
+            bigrams_float.append(bigram_row)
+        bigrams.close()
 
-    	log.info("Reading likelihood file...")
-    	like = open(likelihood_file, "r")
-    	for line in like:
-    		likelihoods.append(float(line))
-    	like.close()
+    log.info("Reading likelihood file...")
+    like = open(likelihood_file, "r")
+    for line in like:
+        likelihoods.append(float(line))
+    like.close()
 
     # print("likelihoods: " + str(likelihoods))
 
@@ -370,10 +374,13 @@ def main():
     # Finally, evaluate some DNS queries
     log.info("Evaluating DNS query strings...")
 
-    #start blacklist updater
-    bthread=threading.Thread(target=blacklist_updater_thread,args=(300,log,))
+    #start blacklist updater thread
+    bthread=threading.Thread(target=blacklist_updater_thread,args=(UPDATE_SECONDS,log,))
     bthread.start()
 
+    # next we are going to create a worker pool to respond to queries.
+    # No analysis has been done on how many threads should be run. Gut feeling
+    # would be to make it equal to the number of pdns threads or threads+1
     url_worker="inproc://workers"
     url_client = "tcp://*:5555"
 
@@ -383,7 +390,8 @@ def main():
     clients.bind(url_client)
     workers = context.socket(zmq.DEALER)
     workers.bind(url_worker)
-    for i in range(5):
+
+    for i in range(NUM_THREADS):
         thread = threading.Thread(target=worker_routine, args=(url_worker,log, likelihoods, bigrams_float,))
         thread.start()
 
