@@ -44,3 +44,7 @@ move config vars to a config file
 make a better installer
 
 make whitelisting easier
+
+fix numbers that should be variables
+
+fix misdefinition of tld as a variable
