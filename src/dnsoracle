@@ -5,7 +5,7 @@ import time
 import zmq
 import threading
 import logging
-from systemd.journal import JournalHandler
+from systemd import journal
 import math
 from collections import Counter
 from sets import Set
@@ -314,7 +314,7 @@ def worker_routine(worker_url,log, likelihoods,bigrams_float,context=None):
 def main():
     #set up logging
     log = logging.getLogger('dnsoracle')
-    log.addHandler(JournalHandler())
+    log.addHandler(journal.JournalHandler())
     log.setLevel(logging.INFO)
     log.info("started dnsoracle logging")
 
@@ -327,46 +327,46 @@ def main():
         log.info("No likelihood file...")
 
 
-    # See if bigram data exists.
-    if not os.path.isfile(bigram_file):		# If not, generate
+        # See if bigram data exists.
+        if not os.path.isfile(bigram_file):		# If not, generate
 
-        log.info("No bigram file, generating...")
-        if not os.path.isfile(word_file):
-            log.info("Need wordfile for bigrams, but not found")
-        else:
-            bigrams_float = compute_bigrams(word_file, bigram_file)
-    else:									# If yes, import from file
-        log.info("Reading bigram file...")
-        bigrams = open(bigram_file,"r")
-        for line in bigrams:
-            bigram_row = []
-            line_list = line.split()
-            # print("line_list: " + str(line_list))
-            for entry in line_list:
-                bigram_row.append(float(entry))
-            bigrams_float.append(bigram_row)
-            bigrams.close()
+            log.info("No bigram file, generating...")
+            if not os.path.isfile(word_file):
+                log.info("Need wordfile for bigrams, but not found")
+            else:
+                bigrams_float = compute_bigrams(word_file, bigram_file)
+        else:									# If yes, import from file
+            log.info("Reading bigram file...")
+            bigrams = open(bigram_file,"r")
+            for line in bigrams:
+                bigram_row = []
+                line_list = line.split()
+                # print("line_list: " + str(line_list))
+                for entry in line_list:
+                    bigram_row.append(float(entry))
+                bigrams_float.append(bigram_row)
+                bigrams.close()
 
-    log.info("Computing likelihoods...")
-    likelihoods = compute_likelihoods(word_file, bigrams_float)
+        log.info("Computing likelihoods...")
+        likelihoods = compute_likelihoods(word_file, bigrams_float)
 
     else:
-    if bigrams_float == []:
-        bigrams = open(bigram_file,"r")
-        for line in bigrams:
-            bigram_row = []
-            line_list = line.split()
-            # print("line_list: " + str(line_list))
-            for entry in line_list:
-                bigram_row.append(float(entry))
-            bigrams_float.append(bigram_row)
-        bigrams.close()
+        if bigrams_float == []:
+            bigrams = open(bigram_file,"r")
+            for line in bigrams:
+                bigram_row = []
+                line_list = line.split()
+                # print("line_list: " + str(line_list))
+                for entry in line_list:
+                    bigram_row.append(float(entry))
+                bigrams_float.append(bigram_row)
+            bigrams.close()
 
-    log.info("Reading likelihood file...")
-    like = open(likelihood_file, "r")
-    for line in like:
-        likelihoods.append(float(line))
-    like.close()
+        log.info("Reading likelihood file...")
+        like = open(likelihood_file, "r")
+        for line in like:
+            likelihoods.append(float(line))
+        like.close()
 
     # print("likelihoods: " + str(likelihoods))
 

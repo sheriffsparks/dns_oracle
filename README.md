@@ -9,6 +9,11 @@ This program was used in a defensive cyber competition. The red team primarly us
 ### Dependicies
 Your going to need zmq, python-systemd, and python-zmq and mysql the mysqldb stuff for python. If I missed something please let me know.
 
+This has only be tested/ran on Debian
+
+Don't pip instal python-systemd, install via apt 
+
+MYSQLdb requires libmysqlclient-dev. See this: https://stackoverflow.com/questions/25865270/how-to-install-python-mysqldb-module-using-pip
 ### Installation
 The install script will install it as a systemd service. I recommend this because systemctl stop dnsoracle.service does a better job of killing the multithreaded handler.
 
